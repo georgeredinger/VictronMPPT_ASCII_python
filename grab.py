@@ -9,7 +9,7 @@ import logging
 from re import A
 import serial, string
 from datetime import datetime
-import paho.mqtt.client as mqtt
+import paho.mqtt.client as paho
 import time
 import board
 import adafruit_mcp9808
@@ -18,9 +18,10 @@ import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
 from vedirect import Vedirect
 
-
+#publishMinute = set([0,5,10,15,20,25,30,35,40,45,50,55])
+publishMinute = set([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59])
 average_count = 0
-
+last_minute = 0
 
 logging.basicConfig(filename='victron.log', encoding='utf-8', level=logging.DEBUG)
 
@@ -80,33 +81,16 @@ def getTemperature():
   else:
     return tLast
 
+def on_publish(client, userdata, result):
+    logging.debug("data published {}".format(result))
 
 broker_address="192.168.1.113" 
-client = mqtt.Client("SolarPanel")
-client.connect(broker_address)
+port=1883
 
-#string capture
-dts = {
-'V': 'na',
-'I': 'na',
-'VPV': 'na',
-'PPV': 'na',
-'CS': 'na',
-'MPPT': 'na',
-'ERR': 'na',
-'LOAD' : 'na',
-'IL': 'na',
-'H19' : 'na',
-'H20': 'na',
-'H21': 'na',
-'H22': 'na',
-'H23': 'na',
-'HSDS': 'na',
-'Checksum': 'na',
-'PID': 'na',
-'FW': 'na',
-'SER': 'na',
-}
+client = paho.Client("SolarPanel")
+client.on_publish = on_publish
+client.connect(broker_address,port)
+
 
 #average
 dta = {
@@ -132,77 +116,12 @@ def zerodta():
   dta['C1'] = 0.0
   dta['C2'] = 0.0
 
-chaw = ""
-
-# ser = serial.Serial('/dev/ttyUSB0',19200, 8, 'N', 1, timeout = 5)
-
-# output = " "
-# n = 60
-# s=0
-# while True:
-#   count = 0;
-#   sum_val = 0
-#   while output != "":
-#     boutput = ser.readline()
-#     #checksum on boutput till 'checksum
-#     for b in boutput:
-#       s =  (s + b ) % 256
-#     output =str(boutput)
-
-#     # b':'  whats that?
-#     #decode all the victron data
-#     l = output.split("\\t")
-#     if(len(l) == 2):
-#         key = l[0][2:]
-#         value = l[1][0:-5] 
-#         chaw += key + '\t' + value  + '\r\n'
-#         if key in dta:
-#           dta[key] += float(value);
-#         if key == "Checksum" :
-#             if(s != 0):
-#                 print((chaw))
-#                 print("Bad",key,value,s) #bad
-#                 chaw = ""
-#                 s=0
-#                 continue
-#             else:
-#          #     print((chaw))
-#               chaw = ""
-#               tempF = getTemperature()
-#               dta['T'] += tempF  #temperature
-#               voltage = analogIn()
-#               dta['C0'] += voltage[0]  #cell 0
-#               dta['C1'] += voltage[1]  #cell 1
-#               dta['C2'] += voltage[2]  #cell 2
-#               s=0
-
-#     if output.startswith("b'V\\") :
-#         val = float(int((str(output).split("\\t"))[1].split("\\")[0]))/1000
-#         sum_val = sum_val + val
-#         count += 1
-#         now = datetime.now()
-#         current_time = now.strftime("%H:%M:%S")
-
-#         if(count >=60):
-#             log_string = current_time + "," + str(round(sum_val/n,2)) +'\r\n'
-#             json = "{{\"V\": {0:.2f}}}".format(round(sum_val/n,2) )
-#             count=0
-#             # for k in dta:
-#             #   print(f'{k}:{dta[k]/60}')
-#             sum_val = 0
-#             c1 = dta['C1']/60 - dta['C0']/60
-#             c2 = dta['C2']/60 - dta['C1']/60
-#             json = "{{\"V\": {0:.2f},\"I\": {1:.2f},\"VPV\": {2:.2f},\"PPV\": {3:.2f},\"IL\": {4:.2f},\"T\": {5:.2f},\"C0\": {6:.2f},\"C1\": {7:.2f},\"C2\": {8:.2f}}}"\
-#             .format(dta['V']/60/1000,dta['I']/60/1000,dta['VPV']/60/1000,dta['PPV']/60,dta['IL']/60/1000,dta['T']/60,dta['C0']/60,c1,c2)
-#             client.publish("SolarPanel", json, qos=0, retain=False)
-#             print(json)
-#             zerodta()
-#         output = " "
-
 
 
 def crunch_data_callback(packet):
     global average_count
+    global last_minute
+    global client
     dta['V'] += float(packet['V']);
     dta['I'] += float(packet['I']);
     dta['VPV'] += float(packet['VPV']);
@@ -214,15 +133,23 @@ def crunch_data_callback(packet):
     dta['C1'] += float(c[1]);
     dta['C2'] += float(c[2]);
     average_count +=1
-    if(average_count >=60):
-      average_count = 0
-      c1 = dta['C1']/60 - dta['C0']/60
-      c2 = dta['C2']/60 - dta['C1']/60
+    minute = datetime.now().minute
+    if((minute in publishMinute) and (minute != last_minute ) ):
+
+      last_minute = minute #ensure we don't publish twice in a minute
+      c1 = dta['C1']/average_count - dta['C0']/average_count
+      c2 = dta['C2']/average_count - dta['C1']/average_count
     
       json = "{{\"V\": {0:.2f},\"I\": {1:.2f},\"VPV\": {2:.2f},\"PPV\": {3:.2f},\"IL\": {4:.2f},\"T\": {5:.2f},\"C0\": {6:.2f},\"C1\": {7:.2f},\"C2\": {8:.2f}}}"\
-      .format(dta['V']/60/1000,dta['I']/60/1000,dta['VPV']/60/1000,dta['PPV']/60,dta['IL']/60/1000,dta['T']/60,dta['C0']/60,c1,c2)
-      client.publish("SolarPanel", json, qos=0, retain=False)
-      print(json)
+      .format(dta['V']/average_count/1000,dta['I']/average_count/1000,dta['VPV']/average_count/1000,dta['PPV']/average_count,dta['IL']/average_count/1000,dta['T']/average_count,dta['C0']/average_count,c1,c2)
+      countStash = average_count
+      average_count = 0
+      now = datetime.now().isoformat()
+      print("{},{},{}".format(now,countStash,json))
+      logging.debug("{},{},{}".format(now,countStash,json))
+
+      client.publish("SolarPanel", json, qos=1, retain=True)
+     
       zerodta()
 
 
