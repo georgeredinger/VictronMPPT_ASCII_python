@@ -5,23 +5,30 @@
     control battery heater
     https://github.com/karioja/vedirect
 '''
+
+import os
 import logging
 from re import A
 import serial, string
 from datetime import datetime
-import paho.mqtt.client as paho
 import time
 import board
 import adafruit_mcp9808
 import busio
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BCM)
+D21=21 #D21 labeled on QWICC pihat goes to GPIO21
+GPIO.setup(D21, GPIO.OUT)
+
 from vedirect import Vedirect
 
 publishMinute = set([0,5,10,15,20,25,30,35,40,45,50,55])
 #publishMinute = set([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59])
 average_count = 0
 last_minute = 0
+broker_address = "192.168.1.113"
 
 logging.basicConfig(filename='victron.log', encoding='utf-8', level=logging.DEBUG)
 
@@ -81,15 +88,12 @@ def getTemperature():
   else:
     return tLast
 
-def on_publish(client, userdata, result):
-    logging.debug("data published {}".format(result))
 
-broker_address="192.168.1.113" 
-port=1883
-
-client = paho.Client("SolarPanel",protocol=paho.MQTTv311)
-client.on_publish = on_publish
-client.connect(broker_address,port)
+def mosquitto_publish(topic,message):
+  global broker_address
+  command = "mosquitto_pub -h {} -t \"{}\" -m \'{}\'".format(broker_address ,  topic , message)
+  logging.debug(command)
+  os.system(command)
 
 
 #average
@@ -122,6 +126,12 @@ def crunch_data_callback(packet):
     global average_count
     global last_minute
     global client
+    if(average_count % 2 == 0):
+      GPIO.output(D21, 1)
+    else:
+      GPIO.output(D21, 0)
+
+
     dta['V'] += float(packet['V']);
     dta['I'] += float(packet['I']);
     dta['VPV'] += float(packet['VPV']);
@@ -148,11 +158,10 @@ def crunch_data_callback(packet):
       print("{},{},{}".format(now,countStash,json))
       logging.debug("{},{},{}".format(now,countStash,json))
 
-      client.publish("SolarPanel", json, qos=1, retain=True)
-     
+      mosquitto_publish("SolarPanel", json)
       zerodta()
 
-
+print("beginning data collection")
     
 ve = Vedirect('/dev/ttyUSB0',60)
 ve.read_data_callback(crunch_data_callback)
