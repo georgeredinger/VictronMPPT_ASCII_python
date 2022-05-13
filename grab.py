@@ -30,7 +30,7 @@ average_count = 0
 last_minute = 0
 broker_address = "192.168.1.113"
 
-logging.basicConfig(filename='victron.log', encoding='utf-8', level=logging.DEBUG)
+logging.basicConfig(filename='/mnt/USB/victron.log', encoding='utf-8', level=logging.DEBUG)
 
 
 i2c = board.I2C()  # uses board.SCL and board.SDA
@@ -126,12 +126,7 @@ def crunch_data_callback(packet):
     global average_count
     global last_minute
     global client
-    if(average_count % 2 == 0):
-      GPIO.output(D21, 1)
-    else:
-      GPIO.output(D21, 0)
-
-
+   
     dta['V'] += float(packet['V']);
     dta['I'] += float(packet['I']);
     dta['VPV'] += float(packet['VPV']);
@@ -144,6 +139,15 @@ def crunch_data_callback(packet):
     dta['C2'] += float(c[2]);
     average_count +=1
     minute = datetime.now().minute
+    if(float(packet['V']) > 11400.0): #millivolts 3.8*3*1000
+      GPIO.output(D21, 0)
+      time.sleep(0.1)
+      GPIO.output(D21, 1) #toggle to restart the Arduino pro-mini board timeout deadman switch
+      #logging.debug("GPIO {} {}".format(1,float(packet['V'])))
+    else:
+      GPIO.output(D21, 0)
+      #logging.debug("GPIO {} {}".format(0,float(packet['V'])))
+
     if((minute in publishMinute) and (minute != last_minute ) ):
 
       last_minute = minute #ensure we don't publish twice in a minute
